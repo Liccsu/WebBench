@@ -24,7 +24,8 @@
 #include <strings.h>
 #include <time.h>
 #include <signal.h>
-
+#include <errno.h>
+#include <stdbool.h>
 /* values */
 volatile int timerexpired=0;
 int speed=0;
@@ -46,6 +47,8 @@ int force_reload=0;
 int proxyport=80;
 char *proxyhost=NULL;
 int benchtime=30;
+
+bool keep_alive = false;
 
 /* internal */
 int mypipe[2];
@@ -91,6 +94,7 @@ static void usage(void)
             "  -t|--time <sec>          Run benchmark for <sec> seconds. Default 30.\n"
             "  -p|--proxy <server:port> Use proxy server for request.\n"
             "  -c|--clients <n>         Run <n> HTTP clients at once. Default one.\n"
+            "  -k|--keep                Keep-Alive\n"
             "  -9|--http09              Use HTTP/0.9 style requests.\n"
             "  -1|--http10              Use HTTP/1.0 protocol.\n"
             "  -2|--http11              Use HTTP/1.1 protocol.\n"
@@ -115,7 +119,7 @@ int main(int argc, char *argv[])
         return 2;
     } 
 
-    while((opt=getopt_long(argc,argv,"912Vfrt:p:c:?h",long_options,&options_index))!=EOF )
+    while((opt=getopt_long(argc,argv,"912Vfrt:p:c:?hk",long_options,&options_index))!=EOF )
     {
         switch(opt)
         {
@@ -126,7 +130,8 @@ int main(int argc, char *argv[])
             case '1': http10=1;break;
             case '2': http10=2;break;
             case 'V': printf(PROGRAM_VERSION"\n");exit(0);
-            case 't': benchtime=atoi(optarg);break;	     
+            case 't': benchtime=atoi(optarg);break;	
+            case 'k': keep_alive = true;break;     
             case 'p': 
             /* proxy server parsing server:port */
             tmp=strrchr(optarg,':');
@@ -313,7 +318,13 @@ void build_request(const char *url)
     }
   
     if(http10>1)
-        strcat(request,"Connection: close\r\n");
+    {
+        if (!keep_alive)
+            strcat(request,"Connection: close\r\n");
+        else
+            strcat(request,"Connection: Keep-Alive\r\n");
+    }
+        
     
     /* add empty line at end */
     if(http10>0) strcat(request,"\r\n"); 
@@ -357,6 +368,12 @@ static int bench(void)
         pid=fork();
         if(pid <= (pid_t) 0)
         {
+                // if (errno == 11 && pid != 0)
+                // {
+                //     printf("here i = %d\n", i);
+                //     while (fork() < 0);
+                //     continue;
+                // }
             /* child process or error*/
             sleep(1); /* make childs faster */
             break;
@@ -451,6 +468,11 @@ void benchcore(const char *host,const int port,const char *req)
     alarm(benchtime); // after benchtime,then exit
 
     rlen=strlen(req);
+    if (keep_alive)
+    {
+        while ((s = Socket(host,port)) == -1);
+    }
+        
     nexttry:while(1)
     {
         if(timerexpired)
@@ -460,14 +482,23 @@ void benchcore(const char *host,const int port,const char *req)
                 /* fprintf(stderr,"Correcting failed by signal\n"); */
                 failed--;
             }
+            if (!keep_alive) close(s);
             return;
         }
-        
-        s=Socket(host,port);                          
+        if (!keep_alive)
+            s=Socket(host,port);             
         if(s<0) { failed++;continue;} 
-        if(rlen!=write(s,req,rlen)) {failed++;close(s);continue;}
+        if(rlen!=write(s,req,rlen)) {
+            failed++;
+            close(s);
+            while ((s = Socket(host,port)) == -1);
+            continue;
+        }
         if(http10==0) 
-        if(shutdown(s,1)) { failed++;close(s);continue;}
+        if (!keep_alive)
+        {
+            if(shutdown(s,1)) { failed++;close(s);continue;}
+        }
         if(force==0) 
         {
             /* read all available data from socket */
@@ -475,20 +506,31 @@ void benchcore(const char *host,const int port,const char *req)
             {
                 if(timerexpired) break; 
                 i=read(s,buf,1500);
+                //printf("i = %d\n", i);
                 /* fprintf(stderr,"%d\n",i); */
                 if(i<0) 
                 { 
                     failed++;
                     close(s);
+                    if (!keep_alive)
+                    {
+                        while ((s = Socket(host,port)) == -1);
+                    }
+                        
                     goto nexttry;
                 }
                 else
                 if(i==0) break;
                 else
                 bytes+=i;
+                // Supposed reveived bytes were less than 1500
+                if (i < 1500) break;
             }
         }
-        if(close(s)) {failed++;continue;}
+        if (!keep_alive)
+        {
+            if(close(s)) {failed++;continue;}
+        }
         speed++;
     }
 }
