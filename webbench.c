@@ -468,69 +468,100 @@ void benchcore(const char *host,const int port,const char *req)
     alarm(benchtime); // after benchtime,then exit
 
     rlen=strlen(req);
+
+
     if (keep_alive)
     {
-        while ((s = Socket(host,port)) == -1);
+        while ((s = Socket(host,port)) == -1);  
+        nexttry1:while(1)
+        {
+            if(timerexpired)
+            {
+                if(failed>0)
+                {
+                    /* fprintf(stderr,"Correcting failed by signal\n"); */
+                    failed--;
+                }
+                return;
+            }
+           
+            if(s<0) { failed++;continue;} 
+            if(rlen!=write(s,req,rlen)) {
+                failed++;
+                close(s);
+                while ((s = Socket(host,port)) == -1);
+                continue;
+            }
+            if(force==0) 
+            {
+                /* read all available data from socket */
+                while(1)
+                {
+                    if(timerexpired) break; 
+                    i=read(s,buf,1500);
+                    /* fprintf(stderr,"%d\n",i); */
+                    if(i<0) 
+                    { 
+                        failed++;
+                        close(s);
+                        //while ((s = Socket(host,port)) == -1);
+                        goto nexttry1;
+                    }
+                    else
+                    if(i==0) break;
+                    else
+                    bytes+=i;
+                    // Supposed reveived bytes were less than 1500
+                    //if (i < 1500) 
+                        break;
+                }
+            }
+            speed++;
+        }
+    }
+    else
+    {
+        nexttry:while(1)
+        {
+            if(timerexpired)
+            {
+                if(failed>0)
+                {
+                    /* fprintf(stderr,"Correcting failed by signal\n"); */
+                    failed--;
+                }
+                return;
+            }
+            
+            s=Socket(host,port);                          
+            if(s<0) { failed++;continue;} 
+            if(rlen!=write(s,req,rlen)) {failed++;close(s);continue;}
+            if(http10==0) 
+            if(shutdown(s,1)) { failed++;close(s);continue;}
+            if(force==0) 
+            {
+                /* read all available data from socket */
+                while(1)
+                {
+                    if(timerexpired) break; 
+                    i=read(s,buf,1500);
+                    /* fprintf(stderr,"%d\n",i); */
+                    if(i<0) 
+                    { 
+                        failed++;
+                        close(s);
+                        goto nexttry;
+                    }
+                    else
+                    if(i==0) break;
+                    else
+                    bytes+=i;
+                }
+            }
+            if(close(s)) {failed++;continue;}
+            speed++;
+        }
     }
         
-    nexttry:while(1)
-    {
-        if(timerexpired)
-        {
-            if(failed>0)
-            {
-                /* fprintf(stderr,"Correcting failed by signal\n"); */
-                failed--;
-            }
-            if (!keep_alive) close(s);
-            return;
-        }
-        if (!keep_alive)
-            s=Socket(host,port);             
-        if(s<0) { failed++;continue;} 
-        if(rlen!=write(s,req,rlen)) {
-            failed++;
-            close(s);
-            while ((s = Socket(host,port)) == -1);
-            continue;
-        }
-        if(http10==0) 
-        if (!keep_alive)
-        {
-            if(shutdown(s,1)) { failed++;close(s);continue;}
-        }
-        if(force==0) 
-        {
-            /* read all available data from socket */
-            while(1)
-            {
-                if(timerexpired) break; 
-                i=read(s,buf,1500);
-                //printf("i = %d\n", i);
-                /* fprintf(stderr,"%d\n",i); */
-                if(i<0) 
-                { 
-                    failed++;
-                    close(s);
-                    if (!keep_alive)
-                    {
-                        while ((s = Socket(host,port)) == -1);
-                    }
-                        
-                    goto nexttry;
-                }
-                else
-                if(i==0) break;
-                else
-                bytes+=i;
-                // Supposed reveived bytes were less than 1500
-                if (i < 1500) break;
-            }
-        }
-        if (!keep_alive)
-        {
-            if(close(s)) {failed++;continue;}
-        }
-        speed++;
-    }
+    
 }
