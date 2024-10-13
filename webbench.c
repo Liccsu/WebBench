@@ -19,12 +19,11 @@
 #include "socket.c"
 #include <unistd.h>
 #include <sys/param.h>
-#include <rpc/types.h>
+#include <tirpc/rpc/types.h>
 #include <getopt.h>
 #include <strings.h>
 #include <time.h>
 #include <signal.h>
-#include <errno.h>
 #include <stdbool.h>
 /* values */
 volatile int timerexpired=0;
@@ -80,7 +79,7 @@ static void benchcore(const char* host,const int port, const char *request);
 static int bench(void);
 static void build_request(const char *url);
 
-static void alarm_handler(int signal)
+static void alarm_handler([[maybe_unused]] int signal)
 {
     timerexpired=1;
 }	
